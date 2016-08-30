@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<style>
+			#map {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+            padding: 0;
+            position: absolute;
+			left: 0px;
+			top: 0px;
+			}
+			#pokeSearch {
+				width: 10em;
+			}
+			#timeDelta {
+				width: 3em;
+			}
+			.controls {
+				margin-top: 10px;
+			}
+		</style>
+		<script src='sql.js'></script>
+	</head>
+	<body>
+		<input type="text" class="controls" id="timeDelta" placeholder="MIN"></input>
+		<div id="map"></div>
+		<script>
+			function getFile(path, asynch, callback) {
+				var xhr = new XMLHttpRequest();
+				xhr.overrideMimeType("application/json");
+				xhr.open("GET", path, asynch);
+				xhr.onload = function (e) {
+					if (xhr.readyState === 4) {
+						callback(xhr.responseText);
+					}
+				};
+				xhr.onerror = function (e) {
+					console.error(xhr.status);
+				};
+				xhr.send(null);
+			}
+			
+			var spawns = [];
+			
+			var green;
+			var blue;
+			var orange;
+			var grey;
+			var red; 
+			var pstop;
+			var pgym;
+			var map;
+			var mapDiv;
+			var infoWindow;
+			
+			function initMap() {
+				green = {url: "./static/green.png",size: new google.maps.Size(20, 20),anchor: new google.maps.Point(10, 10)};
+				blue = {url: "./static/blue.png",size: new google.maps.Size(20, 20),anchor: new google.maps.Point(10, 10)};
+				orange = {url: "./static/orange.png",size: new google.maps.Size(20, 20),anchor: new google.maps.Point(10, 10)};
+				grey = {url: "./static/grey.png",size: new google.maps.Size(20, 20),anchor: new google.maps.Point(10, 10)};
+				red = {url: "./static/red.png",size: new google.maps.Size(20, 20),anchor: new google.maps.Point(10, 10)};
+				pstop = {url: "./static/Pstop.png",size: new google.maps.Size(20, 20),anchor: new google.maps.Point(10, 10)};
+				gym = {url: "./static/Uncontested.png",size: new google.maps.Size(35, 35),anchor: new google.maps.Point(10, 10)};
+				
+				mapDiv = document.getElementById('map');
+				map = new google.maps.Map(mapDiv, {
+					center: {lat: 55.748, lng: 12.319},
+					zoom: 14,
+				});
+
+
+				var input = document.getElementById("pokeSearch");
+				map.controls[google.maps.ControlPosition.TOP_CENTER].push(input);
+				input = document.getElementById("timeDelta");
+				map.controls[google.maps.ControlPosition.TOP_CENTER].push(input);
+
+
+				var request = new XMLHttpRequest();
+				request.open('GET', 'pogom.db', true);
+				request.responseType = 'arraybuffer';
+
+				var pogomdb;
+				request.onload = function(e) {
+				  var uInt8Array = new Uint8Array(this.response);
+				  pogomdb = new SQL.Database(uInt8Array);
+				  var result;
+			  	  result = pogomdb.exec("SELECT gym_id,latitude,longitude FROM gym");
+				  if (result.length > 0) for (var i=0; i<result[0].values.length; ++i) {
+					if  (i==1) console.log("gyms: " + result[0].values.length);
+					var aMarker = new google.maps.Marker({
+						position: new google.maps.LatLng(result[0].values[i][1],result[0].values[i][2]),
+						icon: gym,
+						map: map
+					});
+
+				  }
+			  	  result = pogomdb.exec("SELECT pokestop_id,latitude,longitude FROM pokestop");
+				  if (result.length > 0) for (var i=0; i<result[0].values.length; ++i) {
+					if  (i==1) console.log("pokestops: " + result[0].values.length);
+					var aMarker = new google.maps.Marker({
+						position: new google.maps.LatLng(result[0].values[i][1],result[0].values[i][2]),
+						icon: pstop,
+						map: map
+					});
+				  }
+				  result = pogomdb.exec("SELECT DISTINCT spawnpoint_id,latitude,longitude,(strftime('%M',disappear_time)*60+strftime('%S',disappear_time)) AS secTime FROM pokemon");
+				  infoWindow = new google.maps.InfoWindow();
+				  if (result.length > 0) for (var i=0; i<result[0].values.length; ++i) {
+					if  (i==0) console.log("spawnpoints: " + result[0].values.length);
+					var p = new Object();
+					p.sid = result[0].values[i][0];
+					p.spawnType = 0;
+					// check spawnpoint type
+					//var resultSpawnType = pogomdb.exec("SELECT COUNT(spawnpoint_id) FROM (SELECT DISTINCT spawnpoint_id,strftime('%M',disappear_time) FROM pokemon WHERE spawnpoint_id='"+p.sid+"')");
+					//if (resultSpawnType.length > 0) p.spawnType = resultSpawnType[0].values[0][0];
+
+					p.lat = result[0].values[i][1];
+					p.lng = result[0].values[i][2];
+					p.time = result[0].values[i][3] - 15*60;
+					if (p.time < 0) p.time += 60*60;
+					p.marker = new google.maps.Marker({
+						position: new google.maps.LatLng(p.lat,p.lng),
+						icon: grey,
+						map: map,
+						time: p.time,
+						spawnId: p.sid,
+						spawnType: p.spawnType
+					});
+					google.maps.event.addListener(p.marker, 'click', function () {
+						var t_sec = Math.floor(this.time / 60);
+		  				var result2 = pogomdb.exec("SELECT pokemonId, pokemonName, count(*) as c FROM pokemon LEFT JOIN pokemonnamexid ON pokemon_id=pokemonId WHERE spawnpoint_id=\""+this.spawnId+"\" GROUP BY pokemonId ORDER BY c DESC");
+						var pokemonList = "";
+						if (result2.length > 0) for (var j=0; j<result2[0].values.length; ++j) {
+							pokemonList += "</br>" + result2[0].values[j][2] + " " + result2[0].values[j][1];
+						}
+						infoWindow.setContent('<b>:'+('0'+t_sec.toString()).slice(-2) + '</b><br/>' + pokemonList + '<br/><br/>' + this.spawnType + " - " + this.spawnId);
+  			                  	infoWindow.open(map, this);
+				        });
+
+					p.mode=0;
+					spawns.push(p);
+				  }
+				  setInterval(redrawSpawns, 1000);
+				};
+				request.send();
+			}
+			function redrawSpawns(){
+				var D = new Date();
+				var secPastH = (60*D.getUTCMinutes())+D.getUTCSeconds();
+				var ps_value = parseInt(document.getElementById("timeDelta").value);
+				if ( (ps_value >= 0) && (ps_value <= 60) ) {
+					// override "now" if valid minutes-past-the-hour filled in.
+					secPastH = 60*ps_value;
+				}
+				for(var i = 0; i < spawns.length; i++){
+					var p = spawns[i];
+					var timeD = ((secPastH-p.time)+3600)%3600;
+					if(timeD < 600){
+						if(p.mode!=1){
+							p.mode=1;
+							p.marker.setIcon(green);
+						}
+					}else if(timeD < 900){
+						if(p.mode!=2){
+							p.mode=2;
+							p.marker.setIcon(orange);
+						}
+					}else if(timeD > 3300){
+						if(p.mode!=3){
+							p.mode=3;
+							p.marker.setIcon(blue);
+						}
+					}else{
+						if(p.mode!=0){
+							p.mode=0;
+							p.marker.setIcon(grey);
+						}
+					}
+					//if (p.spawnType > 1) p.marker.setIcon(red);
+				}
+			}
+			</script>
+		<script async defer
+			src="https://maps.googleapis.com/maps/api/js?key=INSERTGOOGLEAPIKEYHERE&callback=initMap">
+		</script>
+	</body>
+</html>
